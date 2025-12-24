@@ -25,10 +25,9 @@ def ont_hot(idx, size):
     return array
 
 
-def haversine(p1, p2):
-    # distance between latitudes
-    lat1, lon1 = p1['y'], p1['x']
-    lat2, lon2 = p2['y'], p2['x']
+def haversine_coord(p1, p2, km=False):
+    lat1, lon1 = p1
+    lat2, lon2 = p2
     # and longitudes
     dLat = (lat2 - lat1) * math.pi / 180.0
     dLon = (lon2 - lon1) * math.pi / 180.0
@@ -39,7 +38,12 @@ def haversine(p1, p2):
     a = (pow(math.sin(dLat / 2), 2) +
          pow(math.sin(dLon / 2), 2) * math.cos(lat1) * math.cos(lat2))
     c = 2 * math.asin(math.sqrt(a))
+    if km: return 6371 * c * 1000.0
     return 6371 * c
+
+
+def haversine(p1, p2, km=False):
+    return haversine_coord(p1=(p1['y'], p1['x']), p2=(p2['y'], p2['x']), km=km)
 
 
 def distance(p1, p2):

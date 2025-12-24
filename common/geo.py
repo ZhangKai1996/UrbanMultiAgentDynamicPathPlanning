@@ -1,22 +1,102 @@
+import math
+
 import numpy as np
 import osmnx as ox
 import networkx as nx
-import matplotlib.pyplot as plt
+
+from common.utils import haversine
+from env.rendering import StaticRender
 
 base_speed = 45000.0 / 3600.0  # m/s
 
 
-def load_graph(place_name):
-    graph = ox.graph_from_place(place_name)
+def load_graph(place_name='Nanjing, China',
+               network_type='all',
+               center_idx=0,
+               radius=1e6,
+               remove=True,
+               render=False):
+    print('-------Loading urban graph-----------')
+    print('\t Place name:', place_name)
+    print('\t Network type:', network_type)
+    print('\t Radius:', radius)
+    print('\t Center index:', center_idx)
+    print('\t Remove isolated nodes:', remove)
+    print('\t Render the graph:', render)
+    print('\t Graph process:')
+
+    graph_ = ox.graph_from_place(place_name, network_type=network_type)
+    print(f"\t\t Initial {len(graph_.nodes)} nodes and {len(graph_.edges)} edges")
+    print(f"\t\t Strong Connection: {nx.is_strongly_connected(graph_)}")
+
+    graph, center_node = extract_subgraph(radius, graph_, center_idx)
+    print(f"\t\t After clipped by distance:", end=' ')
+    print(f"{len(graph.nodes)} nodes and {len(graph.edges)} edges")
+    print(f"\t\t Strong Connection: {nx.is_strongly_connected(graph)}")
+
+    if remove:
+        g_strong = max(nx.strongly_connected_components(graph), key=len)
+        graph = graph.subgraph(g_strong).copy()
+        print(f"\t\t After strongly connected:", end=' ')
+        print(f"{len(graph.nodes)} nodes and {len(graph.edges)} edges")
+
     p, num_action = remove_isolated_nodes(graph)
+    print(f"\t\t After removing isolated nodes:", end=' ')
+    print(f"{len(graph.nodes)} nodes and {len(graph.edges)} edges")
+    print(f"\t\t Number of action: {num_action}")
+
+    if render:
+        name = 'fig_ranges_{}'.format(radius)
+        ranges = {'center': center_node, 'radius': radius}
+        StaticRender(graph_).draw(vf=list(graph.nodes), ranges=ranges, name=name, show=True)
+        StaticRender(graph, height=600).draw(name=name+'_sub', show=True)
+
+    print(f"\t\t Center node (origin): ", center_node, center_node in list(graph.nodes))
+    center_node, ranked_nodes = get_rank(graph, center_node, change_end_node=True)
+    print(f"\t\t Center node (new): ", center_node, center_node in list(graph.nodes))
+
     add_dynamic_weight(graph)
-    return graph, p, num_action
+    print(f"\t\t Strong Connection: {nx.is_strongly_connected(graph)}")
+    return graph, p, num_action, center_node, ranked_nodes
+
+
+def get_rank(graph, end_node, change_end_node=False):
+    nodes = list(graph.nodes)
+    end_node_idx = nodes.index(end_node)
+
+    ret = {}
+    for node_idx in range(len(nodes)):
+        if node_idx == end_node_idx: continue
+
+        u = graph.nodes[nodes[node_idx]]
+        v = graph.nodes[end_node]
+        ret[node_idx] = haversine(u, v)
+
+    sorted_items = sorted(ret.items(), key=lambda x: x[1])
+    dist_arr = np.array([item[1] for item in sorted_items])
+    rank_key = [item[0] for item in sorted_items]
+
+    if change_end_node:
+        end_node = nodes[rank_key[-1]]
+        return get_rank(graph, end_node, change_end_node=False)
+    return end_node, rank_key
+
+
+def extract_subgraph(radius, graph, center_idx):
+    center_node = list(graph.nodes)[center_idx]
+    nodes = graph.nodes
+
+    sub_nodes = []
+    for i, node in enumerate(list(nodes)):
+        dist = haversine(nodes[center_node], nodes[node], km=True)
+        if dist <= radius: sub_nodes.append(node)
+    subgraph = graph.subgraph(sub_nodes).copy()
+    return subgraph, center_node
 
 
 def remove_isolated_nodes(graph):
-    print(f"Initial number of nodes: {len(graph.nodes)}")
+    """从图中移除孤立节点：没有连接任何其他节点的节点"""
     while True:
-        # 删除孤立节点：没有连接任何其他节点的节点
         isolated_nodes = []
         ret, max_number = {}, 0
         for node1 in graph.nodes:
@@ -24,6 +104,7 @@ def remove_isolated_nodes(graph):
             for node2, data in graph[node1].items():
                 if node1 == node2: continue
                 if data.get('length', 1) > 0: tmp.append(node2)
+
             if len(tmp) <= 0:
                 isolated_nodes.append(node1)
             else:
@@ -31,92 +112,81 @@ def remove_isolated_nodes(graph):
                 max_number = max(max_number, len(tmp))
 
         if len(isolated_nodes) <= 0: break
-        print(isolated_nodes)
-        # 从图中移除孤立节点
         graph.remove_nodes_from(isolated_nodes)
-    print(f"Number of nodes after removing isolated nodes: {len(graph.nodes)}")
-    print(f"Number of edges after removing isolated nodes: {len(graph.edges)}")
     return ret, max_number
 
 
-def add_dynamics(graph, dynamic=None, limitations=None):
-    if dynamic is None: return None, None
-
+def add_dynamic_weight(graph, dynamics=False, alpha=0.5):
     nodes = list(graph.nodes)
-    edge_index, edge_attr = [], []
-    for u, v, data in graph.edges(data=True):
-        key = '{}-{}'.format(u, v)
-        if limitations is not None:
-            if key not in limitations: continue
-
-        times = dynamic[key]
-        length = data.get('length', 1)
-        traffic_time = length / (base_speed * times)
-        data['times'] = times
-        data['dynamic_weight'] = traffic_time
-
-        i1 = nodes.index(u)
-        i2 = nodes.index(v)
-        edge_index.append([i1, i2])
-        edge_attr.append(times)
-        # edge_attr.append(traffic_time)
-    return edge_index, edge_attr
-
-
-def add_dynamic_weight(graph, nodes=None, dynamic=False):
-    if nodes is None:
-        nodes = list(graph.nodes)
 
     edge_index, edge_attr = [], []
     for u, v, data in graph.edges(data=True):
         times = 1.0
-        if dynamic:
+        if isinstance(dynamics, dict):
+            times = dynamics['{}-{}'.format(u, v)]
+        elif dynamics:
             times = np.random.uniform(0.1, 1.5)
+
         length = data.get('length', 1)
         traffic_time = length / (base_speed * times)
+        static_time = length / base_speed
+
         data['times'] = times
         data['dynamic_weight'] = traffic_time
+        data['static_weight'] = static_time
+        data['mixed_weight'] = alpha * traffic_time + (1 - alpha) * static_time
 
-        i1 = nodes.index(u)
-        i2 = nodes.index(v)
-        edge_index.append([i1, i2])
+        edge_index.append([nodes.index(u), nodes.index(v)])
         edge_attr.append(times)
-        # edge_attr.append(traffic_time)
     return edge_index, edge_attr
 
 
-def plot_graph(graph, name='graph', subgraph=None, node_size=10, show=False):
-    """
-    可视化原图和子图（子图以红色高亮显示）
-    """
-    pos = {node: (data['x'], data['y']) for node, data in graph.nodes(data=True)}
-    plt.figure(figsize=(12, 12))
-    # 绘制原图
-    nx.draw(graph,
-            pos=pos,
-            node_size=node_size * 2,
-            edge_color='lightgray',
-            node_color='gray',
-            alpha=0.3,
-            linewidths=0.2)
+def _get_all_neighbors(graph, source, n):
+    visited = {source}  # 已访问过的节点（包含自己）
+    current_layer = {source}
 
-    if subgraph is not None:
-        # 绘制子图
-        nx.draw(subgraph,
-                pos=pos,
-                node_size=node_size,
-                edge_color='red',
-                node_color='red',
-                alpha=0.9,
-                linewidths=1.0)
-    plt.title(name)
-    plt.axis('off')
-    plt.tight_layout()
-
-    plt.savefig(name+'.png', dpi=300)
-    if show: plt.show()
+    for depth in range(1, n + 1):
+        next_layer = set()
+        for node in current_layer:
+            neighbors = set(graph.neighbors(node))
+            new_nodes = neighbors - visited
+            next_layer |= new_nodes
+        visited |= next_layer
+        current_layer = next_layer
+    return list(visited)
 
 
-if __name__ == '__main__':
-    graph_, *_ = load_graph(place_name='南京航空航天大学(将军路校区)')
-    plot_graph(graph_)
+def get_hop_neighborhoods(graph, target=None, n=1, k=1.0):
+    print('------Get n-hop neighborhoods--------')
+    print('\t n =', n)
+    print('\t k =', k)
+
+    if n < 0:  return {'subgraphs': None, 'max_len': len(graph.edges)}
+    if n == 0: return {'subgraphs': {}, 'max_len': 1}
+    nodes = graph.nodes
+
+    ret, len_nodes = {}, []
+    for u in list(nodes):
+        node_list = []
+        for x in  _get_all_neighbors(graph, u, n=n):
+            if is_in_sector(u, target, x, nodes, k=k):
+                node_list.append(x)
+
+        subgraph = graph.subgraph(node_list).copy()
+        len_nodes.append(len(subgraph.edges))
+        ret[u] = subgraph
+
+    print(f"\t Max Subgraph Length: {max(len_nodes)}")
+    print(f"\t Min Subgraph Length: {min(len_nodes)}")
+    return {'subgraphs': ret, 'max_len': max(len_nodes)}
+
+
+def is_in_sector(u, v, x, nodes, k=1.0):
+    """ 判断节点 x 是否位于 u 指向 v 的扇形（±angle_deg°）内 """
+    assert 0.0 <= k <= 1.0
+    if v is None: return True
+
+    angle_uv = math.atan2(nodes[v]['y'] - nodes[u]['y'], nodes[v]['x'] - nodes[u]['x'])
+    angle_ux = math.atan2(nodes[x]['y'] - nodes[u]['y'], nodes[x]['x'] - nodes[u]['x'])
+    diff = abs((angle_ux - angle_uv + math.pi) % (2 * math.pi) - math.pi)
+    return diff <= math.radians(k * 180)

@@ -1,7 +1,9 @@
 import heapq
 
+from common.geo import base_speed
 
-def dijkstra_path(graph, start_node, end_node, weight_key='dynamic_weight'):
+
+def dijkstra_path(graph, start_node, end_node, matrix=None, weight_key='dynamic_weight'):
     # 最小堆，存储 (累计成本, 当前节点, 路径)
     heap = [(0, start_node, [start_node])]
     visited = set()
@@ -12,9 +14,15 @@ def dijkstra_path(graph, start_node, end_node, weight_key='dynamic_weight'):
         if current in visited: continue
         visited.add(current)
 
-        for neighbor in graph.neighbors(current):
+        for neighbor in graph[current].keys():
             if neighbor in visited: continue
-            weight = graph[current][neighbor][0][weight_key]
 
+            if matrix is None:
+                weight = graph[current][neighbor][0][weight_key]
+            else:
+                length = graph[current][neighbor][0]['length']
+                times = matrix[f'{current}-{neighbor}']
+                weight = length / (base_speed * times)
             heapq.heappush(heap, (cost + weight, neighbor, path + [neighbor]))
+
     return float('inf'), []  # 如果没有路径
