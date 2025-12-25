@@ -7,9 +7,10 @@ class DijkstraSolver:
         self.weight_key = weight_key
 
     def solve(self, start, goal):
+        if start == goal: return [start, goal], 0.0
+
         pq = [(0.0, start, [])]
         visited = set()
-
         while pq:
             cost, u, path = heapq.heappop(pq)
             if u in visited: continue
@@ -20,7 +21,6 @@ class DijkstraSolver:
             for v, data in self.graph[u].items():
                 w = data.get(self.weight_key, 1.0)
                 heapq.heappush(pq, (cost + w, v, path))
-
         return None, float("inf")
 
     def precompute_distances(self, nodes):
@@ -31,6 +31,5 @@ class DijkstraSolver:
         dist = {u: {} for u in nodes}
         for u in nodes:
             for v in nodes:
-                if u == v: continue
                 dist[u][v] = self.solve(u, v)[1]
         return dist

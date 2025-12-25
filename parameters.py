@@ -4,6 +4,7 @@ c = 100.0
 alpha = 0.001
 num_agents = 5
 num_tasks = 10
+num_dynamics = 100
 
 env_kwargs = {'place_name': None,
               'network_type': 'drive',

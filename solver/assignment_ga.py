@@ -4,17 +4,14 @@ from solver.tsp import TSPSolverGA
 
 
 class MultiAgentAssignmentGA:
-    def __init__(self, dist, agents, init_nodes):
+    def __init__(self, dist, agents):
         self.dist = dist
         self.agents = agents
-        self.start_node = init_nodes[0]
-        self.end_node = init_nodes[1]
-
         self.tsp_solver = TSPSolverGA(dist)
 
-    def solve(self, tasks, population_size=30, generations=40):
-        task_ids = [t["id"] for t in tasks]
-        task_nodes = {t["id"]: t["node"] for t in tasks}
+    def solve(self, tasks, population_size=50, generations=30):
+        task_ids = [i for i, _ in enumerate(tasks)]
+        task_nodes = {i: t.node for i, t in enumerate(tasks)}
         num_agents = len(self.agents)
 
         def random_individual():
@@ -25,8 +22,9 @@ class MultiAgentAssignmentGA:
             for t_id, a_id in ind.items(): orders[a_id].append(task_nodes[t_id])
 
             cost = 0.0
-            for order in orders:
-                _, c = self.tsp_solver.solve(self.start_node, order, self.end_node)
+            for i, order in enumerate(orders):
+                agent = self.agents[i]
+                _, c = self.tsp_solver.solve(agent.current_node, order, agent.end_node)
                 cost += c
             return cost
 

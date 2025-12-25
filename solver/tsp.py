@@ -9,7 +9,7 @@ class TSPSolverGA:
         self.dist = dist
 
     def solve(self, start_node, task_nodes, end_node,
-              population_size=20,
+              population_size=50,
               generations=30,
               mutation_rate=0.2):
 
